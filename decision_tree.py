@@ -1,6 +1,8 @@
 import argparse
 import random
 import numpy as np
+import time
+import concurrent.futures
 
 from dataset import Dataset
 from decision_stump import BranchingDecisionStump
@@ -89,7 +91,7 @@ class RandomForest(object):
         self.n_trees = n_trees
         self.trees = []
         self.seed = seed
-        self.used_sample_per_tree = []
+        self.used_sample_per_tree = {}
         self.used_tree_per_sample = {}
 
         self.all_data_size = 0
@@ -111,8 +113,30 @@ class RandomForest(object):
             bagging_data_x, bagging_data_y, bagging_idx = Dataset.couple_bagging_for_training(data_x, data_y, random_seed=self.seed, sample_rate=sample_rate)
             dt.train(bagging_data_x, bagging_data_y)
             self.trees.append(dt)
-            self.used_sample_per_tree.append(self.unique_index(bagging_idx))
+            self.used_sample_per_tree[tree_idx] = self.unique_index(bagging_idx)
             print("grown trees: {}/{}".format(tree_idx+1, self.n_trees))
+        
+        self.find_all_tree_use_each_sample()
+        print('===== TRAINING ENDED =====')
+    
+
+    def train_multiprocessing(self, data_x, data_y, sample_rate=0.5, workers=4):
+        """ Still has some bug
+        """
+        print('===== START TRAINING RANDOM FOREST =====')
+        self.all_data_size = data_x.shape[0]
+        self.bagging_data_size = self.all_data_size * sample_rate
+
+        for tree_idx in range(self.n_trees):
+            dt = DecisionTree(depth=1, verbose=False)
+            bagging_data_x, bagging_data_y, bagging_idx = Dataset.couple_bagging_for_training(data_x, data_y, random_seed=self.seed, sample_rate=sample_rate)
+            start_time = time.time()
+            with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor: 
+                executor.submit(dt.train, bagging_data_x, bagging_data_y)
+            training_used_time_per_tree = time.time() - start_time
+            self.trees.append(dt)
+            self.used_sample_per_tree[tree_idx] = self.unique_index(bagging_idx)
+            print("grown trees: {}/{}; elapsed time: {} sec".format(tree_idx+1, self.n_trees, training_used_time_per_tree))
         
         self.find_all_tree_use_each_sample()
         print('===== TRAINING ENDED =====')
@@ -128,9 +152,8 @@ class RandomForest(object):
                 pred_ys.append(self.trees[tree_idx].predict_batch(data_x))
         
         pred_y = np.asarray(pred_ys).mean(axis=0)
-        #print(pred_y)
         for y_idx in range(pred_y.shape[0]):
-            pred_y[y_idx] = 1. if pred_y[y_idx] > 0. else -1.
+            pred_y[y_idx] = 1.0 if pred_y[y_idx] > 0. else -1.0
         
         return pred_y
 
@@ -150,7 +173,7 @@ if __name__  == "__main__":
 
     from sklearn.metrics import accuracy_score
 
-    #'''
+    '''
     # 14
     print('Problem 14')
     dt = DecisionTree(verbose=True)
@@ -160,9 +183,15 @@ if __name__  == "__main__":
     print()
     print()
     #'''
-
-    rf = RandomForest(n_trees=2000)
+    
+    rf = RandomForest(n_trees=5)
+    start_time = time.time()
+    #with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor: 
+    #    executor.submit(rf.train, train_x, train_y)
     rf.train(train_x, train_y)
+    training_used_time = time.time() - start_time
+    print("=== Training Time: {} sec".format(training_used_time))
+    
     
     # 15
     print('Problem 15')
